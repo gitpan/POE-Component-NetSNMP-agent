@@ -1,0 +1,48 @@
+{
+   "abstract" : "AgentX clients with NetSNMP::agent and POE",
+   "author" : [
+      "Sebastien Aperghis-Tramoni <sebastien@aperghis.net>"
+   ],
+   "dynamic_config" : 1,
+   "generated_by" : "Module::Build version 0.38, CPAN::Meta::Converter version 2.110930",
+   "license" : [
+      "perl_5"
+   ],
+   "meta-spec" : {
+      "url" : "http://search.cpan.org/perldoc?CPAN::Meta::Spec",
+      "version" : "2"
+   },
+   "name" : "POE-Component-NetSNMP-agent",
+   "prereqs" : {
+      "build" : {
+         "requires" : {
+            "Test::More" : 0
+         }
+      },
+      "configure" : {
+         "requires" : {
+            "Module::Build" : "0.38"
+         }
+      },
+      "runtime" : {
+         "requires" : {
+            "NetSNMP::agent" : "5",
+            "POE" : "0.3502",
+            "SNMP" : "5"
+         }
+      }
+   },
+   "provides" : {
+      "POE::Component::NetSNMP::agent" : {
+         "file" : "lib/POE/Component/NetSNMP/agent.pm",
+         "version" : "0.100"
+      }
+   },
+   "release_status" : "stable",
+   "resources" : {
+      "license" : [
+         "http://dev.perl.org/licenses/"
+      ]
+   },
+   "version" : "0.100"
+}
