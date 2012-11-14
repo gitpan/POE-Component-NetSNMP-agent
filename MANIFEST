@@ -4,11 +4,11 @@ META.json
 Build.PL
 Makefile.PL
 README
-README.pod
 Changes
 eg/synopsis-autohandle
 eg/synopsis-coreref
 eg/synopsis-events
+eg/synopsis-simple
 lib/POE/Component/NetSNMP/agent.pm
 t/00-load.t
 t/01-api.t

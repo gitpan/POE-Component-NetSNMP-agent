@@ -11,10 +11,10 @@ use List::MoreUtils qw< after >;
 use NetSNMP::agent;
 use POE;
 use SNMP ();
-use version ();
+use SNMP::ToolBox;
 
 
-our $VERSION = "0.300";
+our $VERSION = "0.400";
 
 
 use constant {
@@ -23,10 +23,6 @@ use constant {
 
     HAVE_SORT_KEY_OID
                     => eval "use Sort::Key::OID 0.04 'oidsort'; 1" ? 1 : 0,
-
-    BUGGY_NETSNMP_AGENT => eval {
-        version->new($NetSNMP::agent::VERSION) < version->new("5.04")
-    },
 };
 
 
@@ -172,7 +168,7 @@ sub ev_agent_check {
     # schedule next check
     $kernel->delay(agent_check => $heap->{ping_delay}),
 
-    # process the incoming data and invoque the callback
+    # process the incoming data and invoke the callback
     SNMP::_check_timeout();
     $heap->{agent}->agent_check_and_process(0);
 
@@ -213,9 +209,11 @@ sub ev_tree_handler {
 
         if ($mode == MODE_GET) {
             if (exists $oid_tree->{$oid}) {
-                my $type  = $oid_tree->{$oid}[TYPE];
-                my $value = $oid_tree->{$oid}[VALUE];
-                $request->setValue($type, $value);
+                # /!\ no intermediate vars. see comment at end
+                $request->setValue(
+                    $oid_tree->{$oid}[TYPE],
+                    $oid_tree->{$oid}[VALUE]
+                );
             }
             else {
                 $request->setError($request_info, SNMP_ERR_NOSUCHNAME);
@@ -224,16 +222,15 @@ sub ev_tree_handler {
         }
         elsif ($mode == MODE_GETNEXT) {
             # find the OID after the requested one
-            my ($next_oid) = after { $_ eq $oid } @$oid_list;
-            $next_oid ||= "";
-            $next_oid ||= @$oid_list[0] unless exists $oid_tree->{$oid};
+            my $next_oid = find_next_oid($oid_list, $oid);
 
             if (exists $oid_tree->{$next_oid}) {
-                my $type  = $oid_tree->{$next_oid}[TYPE];
-                my $value = $oid_tree->{$next_oid}[VALUE];
-                $value = "$value" if BUGGY_NETSNMP_AGENT;
+                # /!\ no intermediate vars. see comment at end
                 $request->setOID($next_oid);
-                $request->setValue($type, $value);
+                $request->setValue(
+                    $oid_tree->{$next_oid}[TYPE],
+                    $oid_tree->{$next_oid}[VALUE]
+                );
             }
             else {
                 $request->setError($request_info, SNMP_ERR_NOSUCHNAME);
@@ -278,7 +275,7 @@ sub ev_add_oid_tree {
     my $oid_tree = $heap->{oid_tree};
 
     # make sure that the OIDs start with a dot
-    my @oids = map { ".$_" unless index($_, ".") == 0 } keys %$new_tree;
+    my @oids = map { index($_, ".") == 0 ? $_ : ".$_" } keys %$new_tree;
 
     # add the given entries to the tree
     @{$oid_tree}{@oids} = values %$new_tree;
@@ -292,6 +289,74 @@ sub ev_add_oid_tree {
 # ==============================================================================
 # Methods
 #
+
+
+#
+# new()
+# ---
+sub new {
+    my $class = shift;
+    croak "error: odd number of arguments" unless @_ % 2 == 0;
+
+    my %args = @_;
+    my $update_handlers = delete $args{AutoUpdate};
+    carp "warning: no OID tree update handlers defined"
+        unless $update_handlers;
+
+    # instanciate ourself
+    my $self = POE::Component::NetSNMP::agent->spawn(%args);
+
+    # create a heap reserved for the update handlers
+    $self->[0]{update_handlers_heap} = {};
+
+    # create the states for wrapping around the update handlers
+    my %state;
+    for my $def (@$update_handlers) {
+        my ($coderef, $delay) = @$def;
+        my $name = "wrap_sub_$coderef";
+
+        $state{$name} = sub {
+            $_[KERNEL]->delay($name, $delay);
+            eval { $coderef->($self) };
+            warn $@ if $@;
+        };
+    }
+
+    # create the additional session to execute the update handlers
+    POE::Session->create(
+        heap => {
+            agent   => $self,
+        },
+
+        args => [ keys %state ],
+
+        inline_states => {
+            _start => sub {
+                $_[KERNEL]->alias_set("main");
+                $_[KERNEL]->yield($_) for @_[ARG0 .. $#_];
+            },
+            %state,
+        },
+    );
+
+    return $self
+}
+
+
+#
+# run()
+# ---
+sub run {
+    POE::Kernel->run;
+}
+
+
+#
+# heap()
+# ----
+sub heap {
+    $_[0][0]{update_handlers_heap}
+}
 
 
 #
@@ -348,30 +413,12 @@ sub add_oid_tree {
 
 
 # ==============================================================================
-# Functions
-#
-
-
-#
-# by_oid()
-# ------
-# sort() sub-function, for sorting by OID
-#
-sub by_oid ($$) {
-    my (undef, @a) = split /\./, $_[0];
-    my (undef, @b) = split /\./, $_[1];
-    my $v = 0;
-    $v ||= $a[$_] <=> $b[$_] for 0 .. $#a;
-    return $v
-}
-
-
-# ==============================================================================
 # Hackery
 #
 
-{   # live-patch NetSNMP::OID
-    package NetSNMP::OID;
+{
+    package ### live-patch NetSNMP::OID
+            NetSNMP::OID;
     sub as_oid { return join ".", "", $_[0]->to_array }
 }
 
@@ -387,7 +434,7 @@ POE::Component::NetSNMP::agent - AgentX clients with NetSNMP::agent and POE
 
 =head1 VERSION
 
-Version 0.200
+Version 0.400
 
 
 =head1 SYNOPSIS
@@ -403,7 +450,7 @@ Like a traditional C<NetSNMP::agent>, made POE aware:
         AgentX  => 1,
     );
 
-    $agent->register("1.3.6.1.4.1.32272", \&agent_handler);
+    $agent->register(".1.3.6.1.4.1.32272", \&agent_handler);
 
     POE::Kernel->run;
     exit;
@@ -428,7 +475,7 @@ Like a traditional C<NetSNMP::agent>, made POE aware:
         }
     }
 
-Even simpler, let the module do all the stupid work:
+Simpler, let the module do the boring stuff, but keep control of the loop:
 
     use NetSNMP::ASN;
     use POE qw< Component::NetSNMP::agent >;
@@ -440,7 +487,7 @@ Even simpler, let the module do all the stupid work:
                 $_[HEAP]{agent} = POE::Component::NetSNMP::agent->spawn(
                     Alias       => "snmp_agent",
                     AgentX      => 1,
-                    AutoHandle  => "1.3.6.1.4.1.32272",
+                    AutoHandle  => ".1.3.6.1.4.1.32272",
                 );
 
                 $_[KERNEL]->yield("update_tree");
@@ -456,7 +503,28 @@ Even simpler, let the module do all the stupid work:
         my ($kernel, $heap) = @_[ KERNEL, HEAP ];
 
         # populate the OID tree at regular intervals with
-        # add_oid_entry and add_oid_tree
+        # the add_oid_entry and add_oid_tree events
+    }
+
+Even simpler, let the module do all the boring stuff, leaving you nothing
+more to do than providing the handlers to update the OID trees:
+
+    use NetSNMP::ASN;
+    use POE::Component::NetSNMP::agent;
+
+    my $agent = POE::Component::NetSNMP::agent->new(
+        AgentX      => 1,
+        AutoHandle  => ".1.3.6.1.4.1.32272",
+        AutoUpdate  => [[ \&update_tree, 30 ]],
+    );
+
+    $agent->run;
+
+    sub update_tree {
+        my ($self) = @_;
+
+        # populate the OID tree with the add_oid_entry() and add_oid_tree()
+        # methods, a la SNMP::Extension::PassPersist
     }
 
 See also in F<eg/> for more ready-to-use examples.
@@ -552,6 +620,52 @@ B<Example:>
     );
 
 
+=head2 new
+
+Simpler constructor: create all the POE sessions and events to handle
+absolutely all the boring stuff; just provide handlers to update the
+OID trees. Accept the same arguments than C<span> plus the following:
+
+=over
+
+=item *
+
+C<AutoUpdate> - expects a definition of handlers and their respective
+delay (in seconds) in the form of an array of arrays:
+
+    AutoUpdate => [
+        [ CODEREF, DELAY ],
+        ...
+    ],
+
+=back
+
+B<Examples:>
+
+    # create an agent with a single handler, called every 30 sec
+    my $agent = POE::Component::NetSNMP::agent->new(
+        AgentX      => 1,
+        AutoHandle  => ".1.3.6.1.4.1.32272",
+        AutoUpdate  => [[ \&update_tree, 30 ]],
+    );
+
+    # create an agent with two handlers, called respectively
+    # every 10 and every 20 seconds
+    my $agent = POE::Component::NetSNMP::agent->new(
+        AgentX      => 1,
+        AutoHandle  => ".1.3.6.1.4.1.32272",
+        AutoUpdate  => [
+            [ \&update_tree_1, 10 ],
+            [ \&update_tree_2, 20 ],
+        ],
+    );
+
+
+=head2 run
+
+Run the main loop (executes C<< POE::Kernel->run >>)
+
+
 =head2 register
 
 Register a callback handler for a given OID.
@@ -568,8 +682,8 @@ B<Arguments:>
 
 B<Example:>
 
-    $agent->register("1.3.6.1.4.1.32272.1", \&tree_1_handler);
-    $agent->register("1.3.6.1.4.1.32272.2", \&tree_2_handler);
+    $agent->register(".1.3.6.1.4.1.32272.1", \&tree_1_handler);
+    $agent->register(".1.3.6.1.4.1.32272.2", \&tree_2_handler);
 
 
 =head2 add_oid_entry
@@ -591,9 +705,9 @@ C<NetSNMP::ASN> like C<ASN_COUNTER>, C<ASN_GAUGE>, C<ASN_OCTET_STR>..
 
 B<Example:>
 
-    $agent->add_oid_entry("1.3.6.1.4.1.32272.1", ASN_OCTET_STR, "oh hai");
+    $agent->add_oid_entry(".1.3.6.1.4.1.32272.1", ASN_OCTET_STR, "oh hai");
 
-    $agent->add_oid_entry("1.3.6.1.4.1.32272.2", ASN_OCTET_STR,
+    $agent->add_oid_entry(".1.3.6.1.4.1.32272.2", ASN_OCTET_STR,
         "i can haz oh-eye-deez??");
 
 
@@ -618,8 +732,8 @@ structure:
 B<Example:>
 
     %oid_tree = (
-        "1.3.6.1.4.1.32272.1" => [ ASN_OCTET_STR, "oh hai" ];
-        "1.3.6.1.4.1.32272.2" => [ ASN_OCTET_STR, "i can haz oh-eye-deez??" ];
+        ".1.3.6.1.4.1.32272.1" => [ ASN_OCTET_STR, "oh hai" ];
+        ".1.3.6.1.4.1.32272.2" => [ ASN_OCTET_STR, "i can haz oh-eye-deez??" ];
     );
 
     $agent->add_oid_tree(\%oid_tree);
@@ -645,8 +759,8 @@ name or a coderef
 
 B<Example:>
 
-    POE::Kernel->post($agent, register => "1.3.6.1.4.1.32272.1", "tree_1_handler");
-    POE::Kernel->post($agent, register => "1.3.6.1.4.1.32272.2", "tree_2_handler");
+    POE::Kernel->post($agent, register => ".1.3.6.1.4.1.32272.1", "tree_1_handler");
+    POE::Kernel->post($agent, register => ".1.3.6.1.4.1.32272.2", "tree_2_handler");
 
 
 =head2 add_oid_entry
@@ -669,10 +783,10 @@ C<NetSNMP::ASN> like C<ASN_COUNTER>, C<ASN_GAUGE>, C<ASN_OCTET_STR>..
 B<Example:>
 
     POE::Kernel->post($agent, add_oid_entry =>
-        "1.3.6.1.4.1.32272.1", ASN_OCTET_STR, "oh hai");
+        ".1.3.6.1.4.1.32272.1", ASN_OCTET_STR, "oh hai");
 
     POE::Kernel->post($agent, add_oid_entry =>
-        "1.3.6.1.4.1.32272.2", ASN_OCTET_STR, "i can haz oh-eye-deez??");
+        ".1.3.6.1.4.1.32272.2", ASN_OCTET_STR, "i can haz oh-eye-deez??");
 
 
 =head2 add_oid_tree
@@ -696,8 +810,8 @@ structure:
 B<Example:>
 
     %oid_tree = (
-        "1.3.6.1.4.1.32272.1" => [ ASN_OCTET_STR, "oh hai" ];
-        "1.3.6.1.4.1.32272.2" => [ ASN_OCTET_STR, "i can haz oh-eye-deez??" ];
+        ".1.3.6.1.4.1.32272.1" => [ ASN_OCTET_STR, "oh hai" ];
+        ".1.3.6.1.4.1.32272.2" => [ ASN_OCTET_STR, "i can haz oh-eye-deez??" ];
     );
 
     POE::Kernel->post($agent, add_oid_tree => \%oid_tree);
@@ -723,6 +837,14 @@ You can also look for information at:
 
 =over
 
+=item * Search CPAN
+
+L<http://search.cpan.org/dist/POE-Component-NetSNMP-agent/>
+
+=item * Meta CPAN
+
+L<https://metacpan.org/release/POE-Component-NetSNMP-agent>
+
 =item * RT: CPAN's request tracker (report bugs here)
 
 L<https://rt.cpan.org/Public/Dist/Display.html?Name=POE-Component-NetSNMP-agent>
@@ -734,10 +856,6 @@ L<http://annocpan.org/dist/POE-Component-NetSNMP-agent>
 =item * CPAN Ratings
 
 L<http://cpanratings.perl.org/d/POE-Component-NetSNMP-agent>
-
-=item * Search CPAN
-
-L<http://search.cpan.org/dist/POE-Component-NetSNMP-agent/>
 
 =back
 
@@ -773,4 +891,64 @@ by the Free Software Foundation; or the Artistic License.
 See L<http://dev.perl.org/licenses/> for more information.
 
 =cut
+
+
+=begin comment
+
+The interaction problem between NetSNMP::agent and Perl
+- - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+The root of the problem is in the way Perl manages the lexical variables,
+which is exposed by this short example:
+
+    use strict;
+    use Devel::Peek;
+
+    my @a = ( "hai", 42 );
+
+    for (0..$#a) {
+        my $v = $a[$_];
+        Dump $v;
+    }
+
+which, when executed, produces:
+
+    SV = PV(0x504270) at 0x51f0b0
+      REFCNT = 1
+      FLAGS = (PADBUSY,PADMY,POK,pPOK)
+      PV = 0x511a50 "hai"\0
+      CUR = 3
+      LEN = 4
+    SV = PVIV(0x5050d0) at 0x51f0b0
+      REFCNT = 1
+      FLAGS = (PADBUSY,PADMY,IOK,pIOK)
+      IV = 42
+      PV = 0x511a50 "hai"\0
+      CUR = 3
+      LEN = 4
+
+That is, the fields of the scalar are not erased, and "pollutes" the
+scalar in the next loop, and what was a pure integer (IV) suddenly
+becomes a PVIV. In Perl land, this is not a problem because perl DTRT.
+However, in XS land, one must be more cautious, and the implementation
+of setValue() in NetSNMP::agent (from version 5.0 up to 5.7) is somehow
+incorrect and as a matter of fact can't handle PVIV scalars, throwing
+the delightful "Non-unsigned-integer value passed to setValue" error.
+
+See also this discussion on Perl 5 Porters:
+http://www.nntp.perl.org/group/perl.perl5.porters/2011/08/msg175527.html
+
+A first workaround is to stringify everything. but that's kind of icky.
+
+A second one is to add a level of indirection:
+
+    for my $i (0..$#values) {
+        my $v = \$values[$i];
+        Dump $$v;
+    }
+
+A third one is simply to not use any intermediate lexical variables.
+This solution is the one now used in this module.
+
+=end comment
 

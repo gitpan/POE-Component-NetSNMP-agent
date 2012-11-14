@@ -4,7 +4,7 @@
       "Sebastien Aperghis-Tramoni <sebastien@aperghis.net>"
    ],
    "dynamic_config" : 1,
-   "generated_by" : "Module::Build version 0.38, CPAN::Meta::Converter version 2.110930001",
+   "generated_by" : "Module::Build version 0.4003, CPAN::Meta::Converter version 2.120921",
    "license" : [
       "perl_5"
    ],
@@ -16,7 +16,7 @@
    "prereqs" : {
       "build" : {
          "requires" : {
-            "Test::More" : 0
+            "Test::More" : "0"
          }
       },
       "configure" : {
@@ -26,23 +26,19 @@
       },
       "runtime" : {
          "requires" : {
-            "List::MoreUtils" : "0.07",
             "NetSNMP::agent" : "5",
             "POE" : "0.3502",
             "SNMP" : "5",
-            "parent" : 0,
-            "version" : 0
+            "SNMP::ToolBox" : "0.01",
+            "parent" : "0",
+            "version" : "0"
          }
       }
    },
    "provides" : {
-      "NetSNMP::OID" : {
-         "file" : "lib/POE/Component/NetSNMP/agent.pm",
-         "version" : 0
-      },
       "POE::Component::NetSNMP::agent" : {
          "file" : "lib/POE/Component/NetSNMP/agent.pm",
-         "version" : "0.300"
+         "version" : "0.400"
       }
    },
    "release_status" : "stable",
@@ -54,5 +50,5 @@
          "url" : "https://github.com/maddingue/POE-Component-NetSNMP-agent"
       }
    },
-   "version" : "0.300"
+   "version" : "0.400"
 }
