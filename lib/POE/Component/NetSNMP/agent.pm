@@ -14,7 +14,7 @@ use SNMP ();
 use SNMP::ToolBox;
 
 
-our $VERSION = "0.400";
+our $VERSION = "0.500";
 
 
 use constant {
@@ -366,8 +366,8 @@ sub register {
     my ($self, $oid, $callback) = @_;
 
     # check arguments
-    croak "error: no OID defined"       unless $oid;
-    croak "error: no callback defined"  unless $callback;
+    croak "error: no OID defined"       unless defined $oid;
+    croak "error: no callback defined"  unless defined $callback;
     croak "error: callback must be a coderef"
         unless ref $callback and ref $callback eq "CODE";
 
@@ -385,9 +385,9 @@ sub add_oid_entry {
     my ($self, $oid, $type, $value) = @_;
 
     # check arguments
-    croak "error: no OID defined"       unless $oid;
-    croak "error: no type defined"      unless $type;
-    croak "error: no value defined"     unless $value;
+    croak "error: no OID defined"       unless defined $oid;
+    croak "error: no type defined"      unless defined $type;
+    croak "error: no value defined"     unless defined $value;
 
     # register the given OID and callback
     POE::Kernel->post($self, add_oid_entry => $oid, $type, $value);
@@ -434,7 +434,7 @@ POE::Component::NetSNMP::agent - AgentX clients with NetSNMP::agent and POE
 
 =head1 VERSION
 
-Version 0.400
+Version 0.500
 
 
 =head1 SYNOPSIS
@@ -481,15 +481,15 @@ Simpler, let the module do the boring stuff, but keep control of the loop:
     use POE qw< Component::NetSNMP::agent >;
 
 
+    my $agent = POE::Component::NetSNMP::agent->new(
+        Alias       => "snmp_agent",
+        AgentX      => 1,
+        AutoHandle  => ".1.3.6.1.4.1.32272",
+    );
+
     POE::Session->create(
         inline_states => {
             _start => sub {
-                $_[HEAP]{agent} = POE::Component::NetSNMP::agent->spawn(
-                    Alias       => "snmp_agent",
-                    AgentX      => 1,
-                    AutoHandle  => ".1.3.6.1.4.1.32272",
-                );
-
                 $_[KERNEL]->yield("update_tree");
             },
             update_tree => \&update_tree,
@@ -550,7 +550,7 @@ C<post>ing to C<agent_check>;
 
 Note that most of the API is available both as POE events and as object
 methods, in an attempt to make it a bit easier for people not fully used
-to POE.
+to event programming with POE.
 
 This module can use C<Sort::Key::OID> when it is available, for sorting
 OIDs faster than with the internal pure Perl function.
@@ -739,6 +739,10 @@ B<Example:>
     $agent->add_oid_tree(\%oid_tree);
 
 
+=head2 heap
+
+Access the heap dedicated to update handlers.
+
 
 =head1 POE EVENTS
 
@@ -858,6 +862,18 @@ L<http://annocpan.org/dist/POE-Component-NetSNMP-agent>
 L<http://cpanratings.perl.org/d/POE-Component-NetSNMP-agent>
 
 =back
+
+
+=head1 CAVEATS
+
+A known issue with this module is that if the snmpd daemon it is connected
+to dies, the default POE loop will spin over the half-closed Unix socket,
+eating 100% of CPU until the daemon is restarted and the sub-agent has
+reconnected. However, this problem can be worked around by selecting
+an alternative loop like AnyEvent, EV or EPoll (the other loops have the
+same bug).
+
+L<https://github.com/maddingue/POE-Component-NetSNMP-agent/issues/1>
 
 
 =head1 BUGS

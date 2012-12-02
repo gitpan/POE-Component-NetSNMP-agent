@@ -3,28 +3,28 @@ abstract: 'AgentX clients with NetSNMP::agent and POE'
 author:
   - 'Sebastien Aperghis-Tramoni <sebastien@aperghis.net>'
 build_requires:
-  Test::More: 0
+  ExtUtils::MakeMaker: 0
 configure_requires:
-  Module::Build: 0.38
+  ExtUtils::MakeMaker: 0
 dynamic_config: 1
-generated_by: 'Module::Build version 0.4003, CPAN::Meta::Converter version 2.120921'
+generated_by: 'ExtUtils::MakeMaker version 6.62, CPAN::Meta::Converter version 2.120921'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
   version: 1.4
 name: POE-Component-NetSNMP-agent
-provides:
-  POE::Component::NetSNMP::agent:
-    file: lib/POE/Component/NetSNMP/agent.pm
-    version: 0.400
+no_index:
+  directory:
+    - t
+    - inc
 requires:
   NetSNMP::agent: 5
   POE: 0.3502
   SNMP: 5
   SNMP::ToolBox: 0.01
+  Test::More: 0
   parent: 0
   version: 0
 resources:
-  license: http://dev.perl.org/licenses/
   repository: https://github.com/maddingue/POE-Component-NetSNMP-agent
-version: 0.400
+version: 0.500
